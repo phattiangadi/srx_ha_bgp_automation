@@ -1,0 +1,251 @@
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+
+param $oper-status;
+param $admin-status;
+
+match / {
+
+    <op-script-results> {
+
+        var $timer = 5;
+        for $i(1 ... 11) {
+                    /* South Traffic Variables */
+                    mvar $isBgpEstablished = "False";
+                    var $neighbor = '101.101.101.2';
+                    var $southinterface = 'ge-0/0/2';
+
+                    /* Interface Configuration */
+                    var $south_interface_status = {
+                        <get-interface-information> {
+                            <interface-name> $southinterface;
+                        }
+                    }
+
+                    /* North Traffic Variables */
+                    mvar $rtFound = 'False';
+                    var $interface = "ge-0/0/1";
+                    var $rt_Inst = 'inet.0';
+                    
+                    /* Interface Configuration */
+                    var $interface_status = {
+                        <get-interface-information> {
+                            <interface-name> $interface;
+                        }
+                    }
+
+                    /* Show Route RPC */
+                    var $get-route-details = {
+                        <get-route-information> {
+                            <table> $rt_Inst;
+                        }
+                    }
+
+                    /* BGP Neighbor RPC */
+                    var $get_bgp_neigh_status = {
+                        <get-bgp-neighbor-information> {
+                            <neighbor-address> $neighbor;
+                        }
+                    }
+
+                    /* Get RE Status */
+                    var $re-name = $junos-context/routing-engine-name;                                                                                                                                     
+
+                    var $mastership = {                                                                                                                                                                    
+                        if ($junos-context/re-master) {                                                                                                                                                    
+                            expr 'master';                                                                                                                                                                 
+                        } else {                                                                                                                                                                           
+                            expr 'backup';                                                                                                                                                                 
+                        }                                                                                                                                                                                  
+                    }    
+
+                    /* Check Route For North Traffic */
+                    var $routeCheck = jcs:invoke( $get-route-details );
+
+                    for-each($routeCheck/route-table/rt) {
+                        var $route-info = ./rt-destination;
+                        if (./rt-destination == '0.0.0.0/0') {
+                            <output> "DEFAULT ROUTE FOUND: Setting Flag True";
+                            set $rtFound = "True";
+                        }
+                    }
+
+                    /* Process Logic for North Traffic */
+                    /*  If Default Route is not found */
+
+                    if ($mastership == 'master') {
+                        <output> "RE" _ $re-name _ "Committing Configuration";
+                        if ($rtFound == "False" ) {
+
+                            var $config-changes = {
+                                <configuration> {
+                                    <interfaces> {
+                                        <interface> {
+                                            <name> $interface;
+                                            <disable>;
+                                        }
+                                    }
+                                }
+                            }
+                            /* Capture Interface Status */
+                            var $intCheck = jcs:invoke( $interface_status );
+                            for-each($intCheck/physical-interface) {
+                                var $admin-status = ./admin-status;
+
+                                if ($admin-status == 'up') {
+                                    /* Load configuration */
+                                    <output> "Default Route Not Found: Interface Enabled, Disabling Interface" _ $interface;
+                                    var $load-action = "merge";
+                                    var $options := {
+                                        <commit-options> {
+                                            <log> "Disabling interface " _ $interface;
+                                        }
+                                    }
+
+                                    var $conn_handle = jcs:open();
+                                    var $results := {
+                                        call jcs:load-configuration($action=$load-action, $commit-options=$options, $configuration=$config-changes, $connection=$conn_handle);
+                                    }
+                                    var $close-results = jcs:close($conn_handle);
+                                } else {
+                                    <output> "Default Route Not Found: Interface Down - Do Nothing";
+                                }
+                            }
+                        }
+                        /*  If Default Route is found */
+                        else if ($rtFound == "True") {
+
+                            var $config-changes = {
+                                <configuration> {
+                                    <interfaces> {
+                                        <interface> {
+                                            <name> $interface;
+                                            <disable delete="delete">;
+                                        }
+                                    }
+                                }
+                            }
+                            /* Capture Interface Status */
+                            var $intCheck = jcs:invoke( $interface_status );
+                            for-each($intCheck/physical-interface) {
+                                var $admin-status = ./admin-status;
+
+                                if ($admin-status == 'down') {
+                                    <output> "Default Route Found: Interface Disabled, Enabling Interface" _ $interface;
+                                    /* Load configuration */
+                                    var $load-action = "merge";
+                                    var $options := {
+                                        <commit-options> {
+                                            <log> "Enabling interface " _ $interface;
+                                        }
+                                    }
+
+                                    var $conn_handle = jcs:open();
+                                    var $results := {
+                                        call jcs:load-configuration($action=$load-action, $commit-options=$options, $configuration=$config-changes, $connection=$conn_handle);
+                                    }
+                                    var $close-results = jcs:close($conn_handle);
+                                } else {
+                                    <output> "Default Route Found: Interface UP - Do Nothing";
+                                }
+                            }
+                        }
+                    }
+
+                    /* Process Logic for South Traffic */
+                    /* Check South BGP Connection Status */
+                    var $bgpResponse = jcs:invoke( $get_bgp_neigh_status );
+
+                    for-each($bgpResponse/bgp-peer) {
+                        if (./peer-state == "Established"){
+                                set $isBgpEstablished = "True";
+                        }
+                    }
+
+                    /* */
+
+                    if ($mastership == 'master') {
+                        <output> "RE" _ $re-name _ "Committing Configuration";
+                        if ($isBgpEstablished == "False" ) {
+
+                            var $config-changes = {
+                                <configuration> {
+                                    <interfaces> {
+                                        <interface> {
+                                            <name> $southinterface;
+                                            <disable>;
+                                        }
+                                    }
+                                }
+                            }
+                            /* Capture Interface Status */
+                            var $intCheck = jcs:invoke( $south_interface_status );
+                            for-each($intCheck/physical-interface) {
+                                var $admin-status = ./admin-status;
+
+                                if ($admin-status == 'up') {
+                                    /* Load configuration */
+                                    <output> "BGP Peer Down: Interface Enabled, Disabling Interface" _ $southinterface;
+                                    var $load-action = "merge";
+                                    var $options := {
+                                        <commit-options> {
+                                            <log> "Disabling interface " _ $southinterface;
+                                        }
+                                    }
+
+                                    var $conn_handle = jcs:open();
+                                    var $results := {
+                                        call jcs:load-configuration($action=$load-action, $commit-options=$options, $configuration=$config-changes, $connection=$conn_handle);
+                                    }
+                                    var $close-results = jcs:close($conn_handle);
+                                } else {
+                                    <output> "BGP Peer Down: Interface Down - Do Nothing";
+                                }
+                            }
+                        }
+                        /*  If Default Route is found */
+                        else if ($isBgpEstablished == "True") {
+
+                            var $config-changes = {
+                                <configuration> {
+                                    <interfaces> {
+                                        <interface> {
+                                            <name> $southinterface;
+                                            <disable delete="delete">;
+                                        }
+                                    }
+                                }
+                            }
+                            /* Capture Interface Status */
+                            var $intCheck = jcs:invoke( $south_interface_status );
+                            for-each($intCheck/physical-interface) {
+                                var $admin-status = ./admin-status;
+
+                                if ($admin-status == 'down') {
+                                    <output> "BGP Peer Up: Interface Disabled, Enabling Interface" _ $southinterface;
+                                    /* Load configuration */
+                                    var $load-action = "merge";
+                                    var $options := {
+                                        <commit-options> {
+                                            <log> "Enabling interface " _ $southinterface;
+                                        }
+                                    }
+
+                                    var $conn_handle = jcs:open();
+                                    var $results := {
+                                        call jcs:load-configuration($action=$load-action, $commit-options=$options, $configuration=$config-changes, $connection=$conn_handle);
+                                    }
+                                    var $close-results = jcs:close($conn_handle);
+                                } else {
+                                    <output> "BGP Peer Up: Interface UP - Do Nothing";
+                                }
+                            }
+                        }
+                    }
+        expr jcs:sleep($timer);
+        }
+    }
+}
