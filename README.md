@@ -31,6 +31,19 @@ NOTE: The same scenario is applied to BGP adjacencies north bound or south bound
 
 In the check_route_script.slax, ensure to change the following parameters to match the neighborship and interfaces in the environment this is being implemented.
 
+#### Under /* South Traffic Variables */
+var $neighbor = '101.101.101.2';
+
+var $southinterface = 'ge-0/0/2';
+
+#### Under  /* North Traffic Variables */
+var $interface = "ge-0/0/1";
+
+var $rt_Inst = 'inet.0';
+
 # Troubleshooting.
 
 Script execution output can be viewed in /var/log/escript.log (Event based script log, this would provide information on the execution and any errors that is reported by the script)
+
+
+NOTE: This script will serve as a baseline for any failover scenario that can implemented on SRX. The logic for BGP can be either changed to a different solution or modified.
